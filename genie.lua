@@ -144,14 +144,9 @@ solution('clumsy')
                     postbuildcommands({
                         "robocopy " .. divert_lib .." " .. subdir .. '  *.dll *.sys >> robolog.txt',
                         "robocopy " .. iup_lib .. " "  .. subdir .. ' iup.dll >> robolog.txt',
-                        "robocopy " .. ROOT .. "/etc/ "   .. subdir .. ' config.txt >> robolog.txt',
-                        "exit /B 0"
                     })
                 elseif platform == MINGW_ACTION then 
                     postbuildcommands({
-                        -- robocopy returns non 0 will fail make
-                        'cp ' .. divert_lib .. "WinDivert* " .. subdir,
-                        'cp ' .. ROOT .. "/etc/config.txt " .. subdir,
                     })
                 end
         end
