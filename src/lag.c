@@ -1,21 +1,20 @@
-// lagging packets
 #include "iup.h"
 #include "common.h"
 #define NAME "lag"
 #define LAG_MIN "0"
-#define LAG_MAX "15000"
-#define KEEP_AT_MOST 2000
-// send FLUSH_WHEN_FULL packets when buffer is full
-#define FLUSH_WHEN_FULL 800
-#define LAG_DEFAULT 50
+#define LAG_MAX "99999"
+#define LAG_DEFAULT 4800
+#define BUFFER_DEFAULT 5000
+#define FLUSHER_DEFAULT 800
 
-// don't need a chance
-static Ihandle *inboundCheckbox, *outboundCheckbox, *timeInput;
+static Ihandle *inboundCheckbox, *outboundCheckbox, *timeInput, *flusherInput, *bufferInput;
 
 static volatile short lagEnabled = 0,
     lagInbound = 1,
     lagOutbound = 1,
-    lagTime = LAG_DEFAULT; // default for 50ms
+    flusher = 0,
+    buffer = 0,
+    lagTime = LAG_DEFAULT;
 
 static PacketNode lagHeadNode = {0}, lagTailNode = {0};
 static PacketNode *bufHead = &lagHeadNode, *bufTail = &lagTailNode;
@@ -29,10 +28,14 @@ static INLINE_FUNCTION short isBufEmpty() {
 
 static Ihandle *lagSetupUI() {
     Ihandle *lagControlsBox = IupHbox(
-        inboundCheckbox = IupToggle("Inbound", NULL),
-        outboundCheckbox = IupToggle("Outbound", NULL),
         IupLabel("Delay(ms):"),
         timeInput = IupText(NULL),
+        inboundCheckbox = IupToggle("Inbound", NULL),
+        outboundCheckbox = IupToggle("Outbound", NULL),
+        IupLabel("Buffer(buf):"),
+        bufferInput = IupText(NULL),
+        IupLabel("Flusher(cnt):"),
+        flusherInput = IupText(NULL),
         NULL
         );
 
@@ -42,6 +45,21 @@ static Ihandle *lagSetupUI() {
     IupSetAttribute(timeInput, SYNCED_VALUE, (char*)&lagTime);
     IupSetAttribute(timeInput, INTEGER_MAX, LAG_MAX);
     IupSetAttribute(timeInput, INTEGER_MIN, LAG_MIN);
+
+    IupSetAttribute(bufferInput, "VISIBLECOLUMNS", "4");
+    IupSetAttribute(bufferInput, "VALUE", STR(BUFFER_DEFAULT));
+    IupSetCallback(bufferInput, "VALUECHANGED_CB", uiSyncInteger);
+    IupSetAttribute(bufferInput, SYNCED_VALUE, (char*)&buffer);
+    IupSetAttribute(bufferInput, INTEGER_MAX, 99999);
+    IupSetAttribute(bufferInput, INTEGER_MIN, 0);
+
+    IupSetAttribute(flusherInput, "VISIBLECOLUMNS", "4");
+    IupSetAttribute(flusherInput, "VALUE", STR(FLUSHER_DEFAULT));
+    IupSetCallback(flusherInput, "VALUECHANGED_CB", uiSyncInteger);
+    IupSetAttribute(flusherInput, SYNCED_VALUE, (char*)&flusher);
+    IupSetAttribute(flusherInput, INTEGER_MAX, 99999);
+    IupSetAttribute(flusherInput, INTEGER_MIN, 0);
+
     IupSetCallback(inboundCheckbox, "ACTION", (Icallback)uiSyncToggle);
     IupSetAttribute(inboundCheckbox, SYNCED_VALUE, (char*)&lagInbound);
     IupSetCallback(outboundCheckbox, "ACTION", (Icallback)uiSyncToggle);
@@ -74,8 +92,6 @@ static void lagStartUp() {
 static void lagCloseDown(PacketNode *head, PacketNode *tail) {
     PacketNode *oldLast = tail->prev;
     UNREFERENCED_PARAMETER(head);
-    // flush all buffered packets
-    LOG("Closing down lag, flushing %d packets", bufSize);
     while(!isBufEmpty()) {
         insertAfter(popNode(bufTail->prev), oldLast);
         --bufSize;
@@ -86,8 +102,7 @@ static void lagCloseDown(PacketNode *head, PacketNode *tail) {
 static short lagProcess(PacketNode *head, PacketNode *tail) {
     DWORD currentTime = timeGetTime();
     PacketNode *pac = tail->prev;
-    // pick up all packets and fill in the current time
-    while (bufSize < KEEP_AT_MOST && pac != head) {
+    while (bufSize < buffer && pac != head) {
         if (checkDirection(pac->addr.Outbound, lagInbound, lagOutbound)) {
             insertAfter(popNode(pac), bufHead)->timestamp = timeGetTime();
             ++bufSize;
@@ -97,22 +112,18 @@ static short lagProcess(PacketNode *head, PacketNode *tail) {
         }
     }
 
-    // try sending overdue packets from buffer tail
     while (!isBufEmpty()) {
         pac = bufTail->prev;
         if (currentTime > pac->timestamp + lagTime) {
-            insertAfter(popNode(bufTail->prev), head); // sending queue is already empty by now
+            insertAfter(popNode(bufTail->prev), head);
             --bufSize;
-            LOG("Send lagged packets.");
         } else {
-            LOG("Sent some lagged packets, still have %d in buf", bufSize);
             break;
         }
     }
 
-    // if buffer is full just flush things out
-    if (bufSize >= KEEP_AT_MOST) {
-        int flushCnt = FLUSH_WHEN_FULL;
+    if (bufSize >= buffer) {
+        int flushCnt = flusher;
         while (flushCnt-- > 0) {
             insertAfter(popNode(bufTail->prev), head);
             --bufSize;

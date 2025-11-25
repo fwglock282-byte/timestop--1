@@ -16,6 +16,7 @@ Module* modules[MODULE_CNT] = {
     &oodModule,
     &tamperModule,
     &resetModule,
+    &capModule,
 	&bandwidthModule,
 };
 
@@ -237,7 +238,7 @@ void init(int argc, char* argv[]) {
     );
 
     IupSetAttribute(dialog, "TITLE", "clumsy rr");
-    IupSetAttribute(dialog, "SIZE", "680x"); // add padding manually to width
+    IupSetAttribute(dialog, "SIZE", "680x");
     IupSetAttribute(dialog, "RESIZE", "NO");
     IupSetCallback(dialog, "SHOW_CB", (Icallback)uiOnDialogShow);
 

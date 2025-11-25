@@ -3,18 +3,16 @@
 #include "common.h"
 #define NAME "throttle"
 #define TIME_MIN "0"
-#define TIME_MAX "1000"
-#define TIME_DEFAULT 30
-// threshold for how many packet to throttle at most
-#define KEEP_AT_MOST 1000
+#define TIME_MAX "9999"
+#define TIME_DEFAULT 3500
 
-static Ihandle *inboundCheckbox, *outboundCheckbox, *chanceInput, *frameInput, *dropThrottledCheckbox;
+static Ihandle *inboundCheckbox, *outboundCheckbox, *chanceInput, *frameInput, *bufferInput, *dropThrottledCheckbox;
 
 static volatile short throttleEnabled = 0,
-    throttleInbound = 1, throttleOutbound = 1,
-    chance = 1000, // [0-10000]
-    // time frame in ms, when a throttle start the packets within the time 
-    // will be queued and sent altogether when time is over
+    throttleInbound = 1,
+    throttleOutbound = 1,
+    chance = 10000,
+    buffer = 0,
     throttleFrame = TIME_DEFAULT,
     dropThrottled = 0; 
 
@@ -31,18 +29,20 @@ static INLINE_FUNCTION short isBufEmpty() {
 
 static Ihandle *throttleSetupUI() {
     Ihandle *throttleControlsBox = IupHbox(
-        dropThrottledCheckbox = IupToggle("Drop Throttled", NULL),
-        IupLabel("Timeframe(ms):"),
+        dropThrottledCheckbox = IupToggle("Drop-Throt", NULL),
+        IupLabel("Delay(ms):"),
         frameInput = IupText(NULL),
         inboundCheckbox = IupToggle("Inbound", NULL),
         outboundCheckbox = IupToggle("Outbound", NULL),
+        IupLabel("Buffer(buf):"),
+        bufferInput = IupText(NULL),
         IupLabel("Chance(%):"),
         chanceInput = IupText(NULL),
         NULL
         );
 
     IupSetAttribute(chanceInput, "VISIBLECOLUMNS", "4");
-    IupSetAttribute(chanceInput, "VALUE", "10.0");
+    IupSetAttribute(chanceInput, "VALUE", "100");
     IupSetCallback(chanceInput, "VALUECHANGED_CB", uiSyncChance);
     IupSetAttribute(chanceInput, SYNCED_VALUE, (char*)&chance);
     IupSetCallback(inboundCheckbox, "ACTION", (Icallback)uiSyncToggle);
@@ -52,15 +52,20 @@ static Ihandle *throttleSetupUI() {
     IupSetCallback(dropThrottledCheckbox, "ACTION", (Icallback)uiSyncToggle);
     IupSetAttribute(dropThrottledCheckbox, SYNCED_VALUE, (char*)&dropThrottled);
 
-    // sync throttle packet number
-    IupSetAttribute(frameInput, "VISIBLECOLUMNS", "3");
+    IupSetAttribute(frameInput, "VISIBLECOLUMNS", "4");
     IupSetAttribute(frameInput, "VALUE", STR(TIME_DEFAULT));
     IupSetCallback(frameInput, "VALUECHANGED_CB", (Icallback)uiSyncInteger);
     IupSetAttribute(frameInput, SYNCED_VALUE, (char*)&throttleFrame);
     IupSetAttribute(frameInput, INTEGER_MAX, TIME_MAX);
     IupSetAttribute(frameInput, INTEGER_MIN, TIME_MIN);
 
-    // enable by default to avoid confusing
+    IupSetAttribute(bufferInput, "VISIBLECOLUMNS", "4");
+    IupSetAttribute(bufferInput, "VALUE", STR(5000));
+    IupSetCallback(bufferInput, "VALUECHANGED_CB", (Icallback)uiSyncInteger);
+    IupSetAttribute(bufferInput, SYNCED_VALUE, (char*)&buffer);
+    IupSetAttribute(bufferInput, INTEGER_MAX, 99999);
+    IupSetAttribute(bufferInput, INTEGER_MIN, 0);
+
     IupSetAttribute(inboundCheckbox, "VALUE", "ON");
     IupSetAttribute(outboundCheckbox, "VALUE", "ON");
 
@@ -88,7 +93,6 @@ static void throttleStartUp() {
 
 static void clearBufPackets(PacketNode *tail) {
     PacketNode *oldLast = tail->prev;
-    LOG("Throttled end, send all %d packets. Buffer at max: %s", bufSize, bufSize == KEEP_AT_MOST ? "YES" : "NO");
     while (!isBufEmpty()) {
         insertAfter(popNode(bufTail->prev), oldLast);
         --bufSize;
@@ -97,7 +101,6 @@ static void clearBufPackets(PacketNode *tail) {
 }
 
 static void dropBufPackets() {
-    LOG("Throttled end, drop all %d packets. Buffer at max: %s", bufSize, bufSize == KEEP_AT_MOST ? "YES" : "NO");
     while (!isBufEmpty()) {
         freeNode(popNode(bufTail->prev));
         --bufSize;
@@ -118,19 +121,16 @@ static short throttleProcess(PacketNode *head, PacketNode *tail) {
     UNREFERENCED_PARAMETER(head);
     if (!throttleStartTick) {
         if (!isListEmpty() && calcChance(chance)) {
-            LOG("Start new throttling w/ chance %.1f, time frame: %d", chance/10.0, throttleFrame);
             throttleStartTick = timeGetTime();
             throttled = TRUE;
-            goto THROTTLE_START; // need this goto since maybe we'll start and stop at this single call
+            goto THROTTLE_START;
         }
     } else {
 THROTTLE_START:
-        // start a block for declaring local variables
         {
-            // already throttling, keep filling up
             PacketNode *pac = tail->prev;
             DWORD currentTick = timeGetTime();
-            while (bufSize < KEEP_AT_MOST && pac != head) {
+            while (bufSize < buffer && pac != head) {
                 if (checkDirection(pac->addr.Outbound, throttleInbound, throttleOutbound)) {
                     insertAfter(popNode(pac), bufHead);
                     ++bufSize;
@@ -140,9 +140,7 @@ THROTTLE_START:
                 }
             }
 
-            // send all when throttled enough, including in current step
-            if (bufSize >= KEEP_AT_MOST || (currentTick - throttleStartTick > (unsigned int)throttleFrame)) {
-                // drop throttled if dropThrottled is toggled
+            if (bufSize >= buffer || (currentTick - throttleStartTick > (unsigned int)throttleFrame)) {
                 if (dropThrottled) {
                     dropBufPackets();
                 } else {
