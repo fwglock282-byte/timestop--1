@@ -3,6 +3,7 @@
 #include <string.h>
 #include <time.h>
 #include <Windows.h>
+#include <dwmapi.h>
 #include "iup.h"
 #include "common.h"
 
@@ -113,9 +114,15 @@ EAT_SPACE:  while (isspace(*current)) { ++current; }
     {
         LOG("Failed to load from config. Fill in a simple one.");
         // config is missing or ill-formed. fill in some simple ones
-        filters[filtersSize].filterName = "loopback packets";
-        filters[filtersSize].filterValue = "outbound and ip.DstAddr >= 127.0.0.1 and ip.DstAddr <= 127.255.255.255";
-        filtersSize = 1;
+        filters[0].filterName = "realtime";
+        filters[0].filterValue = "udp and (udp.SrcPort >= 7000 and udp.SrcPort <= 7999) or (udp.DstPort >= 7000 and udp.DstPort <= 7999)";
+        filters[1].filterName = "realtime + inbound";
+        filters[1].filterValue = "udp and inbound and (udp.SrcPort >= 7000 and udp.SrcPort <= 7999) or (udp.DstPort >= 7000 and udp.DstPort <= 7999)";
+        filters[2].filterName = "realtime + outbound";
+        filters[2].filterValue = "udp and outbound and (udp.SrcPort >= 7000 and udp.SrcPort <= 7999) or (udp.DstPort >= 7000 and udp.DstPort <= 7999)";
+        filters[3].filterName = "realtime + length";
+        filters[3].filterValue = "udp.Length > 700 and (udp.SrcPort >= 7000 and udp.SrcPort <= 7999) or (udp.DstPort >= 7000 and udp.DstPort <= 7999)";
+        filtersSize = 4;
     }
 }
 
@@ -132,8 +139,7 @@ void init(int argc, char* argv[]) {
     IupOpen(&argc, &argv);
 
     // this is so easy to get wrong so it's pretty worth noting in the program
-    statusLabel = IupLabel("NOTICE: When capturing localhost (loopback) packets, you CAN'T include inbound criteria.\n"
-        "Filters like 'udp' need to be 'udp and outbound' to work. See readme for more info.");
+    statusLabel = IupLabel("CLUMSY FOR REC ROOM");
     IupSetAttribute(statusLabel, "EXPAND", "HORIZONTAL");
     IupSetAttribute(statusLabel, "PADDING", "8x8");
 
@@ -230,8 +236,8 @@ void init(int argc, char* argv[]) {
         )
     );
 
-    IupSetAttribute(dialog, "TITLE", "clumsy " CLUMSY_VERSION);
-    IupSetAttribute(dialog, "SIZE", "480x"); // add padding manually to width
+    IupSetAttribute(dialog, "TITLE", "clumsy rr");
+    IupSetAttribute(dialog, "SIZE", "680x"); // add padding manually to width
     IupSetAttribute(dialog, "RESIZE", "NO");
     IupSetCallback(dialog, "SHOW_CB", (Icallback)uiOnDialogShow);
 
@@ -366,7 +372,7 @@ static int uiStartCb(Ihandle *ih) {
     }
 
     // successfully started
-    showStatus("Started filtering. Enable functionalities to take effect.");
+    showStatus("CLUMSY FOR REC ROOM");
     IupSetAttribute(filterText, "ACTIVE", "NO");
     IupSetAttribute(filterButton, "TITLE", "Stop");
     IupSetCallback(filterButton, "ACTION", uiStopCb);
@@ -398,7 +404,7 @@ static int uiStopCb(Ihandle *ih) {
     sendState = SEND_STATUS_NONE;
     IupSetAttribute(stateIcon, "IMAGE", "none_icon");
 
-    showStatus("Stopped. To begin again, edit criteria and click Start.");
+    showStatus("CLUMSY FOR REC ROOM");
     return IUP_DEFAULT;
 }
 
